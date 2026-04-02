@@ -61,7 +61,7 @@ def parse_hirshfeld_block(file_path: str) -> List[float]:
                 if line.strip().startswith("#") or len(line.strip().split()) < 8:
                     continue
                 parts = line.strip().split()
-                charges.append(float(parts[7]))  # 8번째 column: Pop
+                charges.append(float(parts[7]))  # 8th column: Pop
     return charges
 
 def parse_outcar_valence(outcar_file: str) -> Dict[str, float]:
@@ -133,13 +133,13 @@ def process_directory(outcar_path: str, charge_path: str, log_file, vacuum_mode:
     This is agnostic to the charge type (Bader / Hirshfeld); it just chooses
     the proper parser based on CHARGE_TYPE.
     """
-    # 마지막 스냅샷 읽기
+    # Read last snapshot
     structure = ase.io.read(outcar_path, format="vasp-out", index=-1)
 
-    # OUTCAR/POTCAR 에서 ZVAL 정보 읽기
+    # Read ZVAL from OUTCAR/POTCAR
     valence_dict = parse_outcar_valence(outcar_path)
 
-    # CHARGE_TYPE 에 따라 원시 전자수(population) 읽기
+    # Read electron number (population) from CHARGE_TYPE
     if CHARGE_TYPE == "bader":
         charges = parse_acf(charge_path)
     elif CHARGE_TYPE == "hirshfeld":
@@ -167,7 +167,7 @@ def make_clean_atoms(at: Atoms) -> Atoms:
     This avoids ASE/extxyz choking on any list-type or exotic arrays that
     might be attached by the VASP reader or calculators.
     """
-    # 기본 기하 정보만 복사
+    # Copy basis information of structures
     clean = Atoms(
         numbers=at.get_atomic_numbers(),
         positions=at.get_positions(),
@@ -175,15 +175,15 @@ def make_clean_atoms(at: Atoms) -> Atoms:
         pbc=at.get_pbc(),
     )
 
-    # charges 는 반드시 유지
+    # Should be maintained charges
     if "charges" in at.arrays:
         clean.set_array("charges", np.asarray(at.arrays["charges"], float))
 
-    # --- energy / free_energy (info 쪽으로) ---
+    # --- energy / free_energy (to info) ---
     energy = None
     free_energy = None
     stress = None
-    # 1) calc.results 에서 직접 읽기 (VASP calculator가 붙어 있으면 여기 있음)
+    # 1) Read directly from calc.results (if VASP calculator attached)
     try:
         calc = getattr(at, "calc", None)
         if calc is not None:
@@ -203,33 +203,33 @@ def make_clean_atoms(at: Atoms) -> Atoms:
     except Exception:
         pass
 
-    # 2) energy 가 아직 없으면 get_potential_energy() 시도
+    # 2) energy is none yet, trying get_potential_energy()
     if energy is None:
         try:
             energy = float(at.get_potential_energy())
         except Exception:
-            # 그래도 없으면 at.info["energy"] 를 마지막으로 시도
+            # lastly try at.info["energy"]
             if "energy" in at.info:
                 try:
                     energy = float(at.info["energy"])
                 except Exception:
                     energy = None
 
-    # 3) free_energy 가 여전히 None 이고, info 에 있으면 거기서 가져오기
+    # 3) If free_energy is still None and included info, extracted from info
     if free_energy is None and "free_energy" in at.info:
         try:
             free_energy = float(at.info["free_energy"])
         except Exception:
             free_energy = None
 
-    # 4) stress 가 없으면 get_stress() 또는 info["stress"] 시도
+    # 4) If stress is none, try get_stress() or info["stress"]
     if stress is None:
         # get_stress() 시도
         try:
             s = at.get_stress()
             stress = np.asarray(s, float)
         except Exception:
-            # info 에 저장된 stress 가 있다면 그대로 사용
+            # if stress saved in info, use it
             if "stress" in at.info:
                 try:
                     stress = np.asarray(at.info["stress"], float)
@@ -238,11 +238,11 @@ def make_clean_atoms(at: Atoms) -> Atoms:
 
     # ---------- forces ----------
     forces = None
-    # 1) calc 가 있으면 get_forces() 시도
+    # 1) When it have calc, trying get_forces()
     try:
         forces = at.get_forces()
     except Exception:
-        # 2) arrays 에 forces 가 있으면 거기서
+        # 2) When arrays have forces
         if "forces" in at.arrays:
             try:
                 forces = np.asarray(at.arrays["forces"], float)
@@ -252,37 +252,37 @@ def make_clean_atoms(at: Atoms) -> Atoms:
     if forces is not None:
         clean.set_array("forces", forces)
 
-    # ---------- info 에 값들 저장 ----------
+    # ---------- save the values at info ----------
     if energy is not None:
         clean.info["energy"] = energy
 
     if free_energy is not None:
         clean.info["free_energy"] = free_energy
 
-    # stress는 list로 저장해 두면 extxyz info 필드로 잘 나감
+    # If stress saved list, that get into extxyz info feild well
     if stress is not None:
         s_arr = np.asarray(stress, float).reshape(-1)  # 1D array
-        # 필요하면 3x3 → Voigt(6) 등 후처리도 여기서 가능
+        # If needed 3x3 → Voigt(6); can postscript
         clean.info["stress"] = s_arr
 
-    # electrode_potential (우리가 process_directory 에서 넣은 값)
+    # electrode_potential (value from process_directory)
     if "electrode_potential" in at.info:
         try:
             clean.info["electrode_potential"] = float(at.info["electrode_potential"])
         except Exception:
             pass
 
-    # --- electrode_potential (우리가 process_directory에서 넣은 값) ---
+    # --- electrode_potential (values from process_directory) ---
     if "electrode_potential" in at.info:
         try:
             clean.info["electrode_potential"] = float(at.info["electrode_potential"])
         except Exception:
             pass
 
-    # --- 그 외 간단한 스칼라 info도 필요하면 같이 복사 ---
+    # --- Other scalar info copy when we needed ---
     for key, val in at.info.items():
         if key in clean.info:
-            continue  # 이미 넣은 energy/free_energy/electrode_potential 등은 건너뜀
+            continue  # skipped energy/free_energy/electrode_potential and others, which are alread saved
         if isinstance(val, (int, float, np.number, str)):
             clean.info[key] = val
 
@@ -317,9 +317,9 @@ def collect_data_to_extxyz(base_dir: str, output_file: str, log_file_path: str, 
                 continue
 
             try:
-                # 1) OUTCAR + charge 파일을 읽어서 charges / electrode_potential 부착
+                # 1) Read OUTCAR + charge files and attached charges / electrode_potential
                 atoms = process_directory(outcar, charge_file, log_file, vacuum_mode)
-                # 2) extxyz 에 안전하게 쓸 수 있는 최소한의 Atoms 로 정리
+                # 2) Sorted minimal Atoms to write extxyz safely
                 clean_atoms = make_clean_atoms(atoms)
                 atoms_list.append(clean_atoms)
             except Exception as e:
@@ -327,8 +327,8 @@ def collect_data_to_extxyz(base_dir: str, output_file: str, log_file_path: str, 
                 error_count += 1
 
     if atoms_list:
-        # list-type array는 clean_atoms 에서 제거했으므로, 여기서 더 이상
-        # 'list' object has no attribute 'dtype' 에러가 나면 안 된다.
+        # list-type array is already abandoned in clean_atoms
+        # The error 'list' object has no attribute 'dtype' cannot be occured
         ase.io.write(output_file, atoms_list, format="extxyz")
         print(f"✅ Combined extxyz written: {output_file}")
     else:
