@@ -12,7 +12,7 @@ INPUT = {
     # output format: "poscar" or "extxyz"
     "output_format": "extxyz",
 
-    # supercell: 기존 ase_H2O.py의 24.9535 x 23.0512 area를 재현하려면 (5, 4, 1)
+    # supercell: use (5, 4, 1) to reproduce the 24.9535 x 23.0512 area from the original ase_H2O.py
     "supercell": (5, 5, 1),
 
     # water region
@@ -22,7 +22,7 @@ INPUT = {
     "water_thickness": 10.0,
 
     # cell / vacuum
-    "keep_original_cell": False,          # c lattice parameter를 unit과 동일하게
+    "keep_original_cell": False,          # keep the c lattice parameter identical to the unit cell
     "extra_vacuum_above_water": 18.0,
 
     # ion insertion option
@@ -225,7 +225,7 @@ def sort_atoms_for_output(atoms, slab_natoms):
 
     order = []
 
-    # 1. slab: species별 + 각 species 내부 z 오름차순
+    # 1. slab: grouped by species + sorted by z within each species
     slab_species_order = []
     for s in symbols[slab_mask]:
         if s not in slab_species_order:
@@ -236,7 +236,7 @@ def sort_atoms_for_output(atoms, slab_natoms):
         idx = idx[np.argsort(positions[idx, 2], kind="stable")]
         order.extend(idx.tolist())
 
-    # 2. non-slab: O -> H -> 나머지(예: F) 순서
+    # 2. non-slab: O -> H -> remaining species (e.g. F)
     preferred_order = ["O", "H"]
     nonslab_species_present = []
     for s in symbols[nonslab_mask]:
@@ -278,7 +278,7 @@ def build_output_filename(base, fmt):
 def sanitize_for_extxyz(atoms, verbose=True):
     n = len(atoms)
 
-    # 1) dtype 없는 array(list 등)를 np.ndarray로 변환
+    # 1) Convert arrays without dtype (e.g. lists) into np.ndarray
     for k, v in list(atoms.arrays.items()):
         if not hasattr(v, "dtype"):
             try:
@@ -291,7 +291,7 @@ def sanitize_for_extxyz(atoms, verbose=True):
                     print(f"[sanitize] removed array '{k}' (conversion failed): {e}")
                 del atoms.arrays[k]
 
-    # 2) 첫 축 길이가 원자수와 안 맞는 per-atom array 제거
+    # 2) Remove per-atom arrays whose first dimension does not match the number of atoms
     for k, v in list(atoms.arrays.items()):
         if hasattr(v, "shape") and len(v.shape) > 0 and v.shape[0] != n:
             if verbose:
@@ -303,27 +303,27 @@ def sanitize_for_extxyz(atoms, verbose=True):
 
 def build_move_mask_from_constraints(atoms, style="int"):
     """
-    atoms.constraints를 바탕으로 move_mask 생성
+    Build move_mask from atoms.constraints.
     movable = 1(True), fixed = 0(False)
 
-    반환 shape: (N, 3)
+    Returned shape: (N, 3)
     """
     n = len(atoms)
-    move_mask = np.ones((n, 3), dtype=np.int8)  # 기본: 전부 movable
+    move_mask = np.ones((n, 3), dtype=np.int8)  # default: all atoms movable
 
     cell = atoms.get_cell()
 
     for cons in atoms.constraints:
-        # 1) 완전 고정
+        # 1) Fully fixed atoms
         if isinstance(cons, FixAtoms):
             idx = np.asarray(cons.index, dtype=int)
             move_mask[idx, :] = 0
 
-        # 2) Cartesian 기준 축별 고정
+        # 2) Axis-wise constraints in Cartesian coordinates
         elif isinstance(cons, FixCartesian):
             idx = np.asarray(cons.index, dtype=int)
 
-            # ASE에서 cons.mask는 보통 True=fix 인 축
+            # In ASE, cons.mask usually means True = fixed axis
             mask = np.asarray(cons.mask, dtype=bool)
 
             if mask.ndim == 1:
@@ -332,7 +332,7 @@ def build_move_mask_from_constraints(atoms, style="int"):
                 for i_atom, atom_idx in enumerate(idx):
                     move_mask[atom_idx, mask[i_atom]] = 0
 
-        # 3) Scaled 기준 축별 고정
+        # 3) Axis-wise constraints in scaled coordinates
         elif isinstance(cons, FixScaled):
             idx = np.atleast_1d(np.asarray(cons.index, dtype=int))
             mask = np.asarray(cons.mask, dtype=bool)
@@ -362,14 +362,14 @@ def write_structure(atoms, output_file, output_format, move_mask=None):
     elif fmt == "extxyz":
         atoms_to_write = atoms.copy()
 
-        # 기존 move_mask 관련 array 제거
+        # Remove existing move_mask-related arrays
         for k in list(atoms_to_write.arrays.keys()):
             if k == "move_mask" or k.startswith("move_mask"):
                 del atoms_to_write.arrays[k]
 
         if move_mask is not None:
-            # 우리가 move_mask를 직접 쓸 거면
-            # ASE가 constraints로 자동 move_mask를 또 만들지 못하게 막아야 함
+            # If we explicitly write move_mask ourselves,
+            # prevent ASE from automatically generating another move_mask from constraints
             atoms_to_write.set_constraint([])
 
             mm = np.asarray(move_mask)
@@ -390,7 +390,7 @@ def main():
     else:
         rng = np.random.default_rng(INPUT["seed"])
 
-    # 1. slab read + supercell
+    # 1. read slab + build supercell
     slab = read(INPUT["slab_poscar"])
     slab = slab.repeat(INPUT["supercell"])
     slab.set_pbc((True, True, True))
@@ -400,7 +400,7 @@ def main():
     area_xy = cell_xy_area(cell)
     slab_top_z = get_slab_top_z(slab, slab_natoms=slab_natoms)
 
-    # 2. water region
+    # 2. define water region
     water_z_min = slab_top_z + INPUT["water_gap_from_slab"]
     water_z_max = water_z_min + INPUT["water_thickness"]
 
@@ -415,7 +415,7 @@ def main():
             f"Water region exceeds cell height: water_z_max={water_z_max:.3f}, c={c_len:.3f}"
         )
 
-    # 3. estimate H2O count
+    # 3. estimate the number of H2O molecules
     n_h2o = estimate_num_waters(
         area_xy=area_xy,
         thickness=INPUT["water_thickness"],
@@ -443,7 +443,7 @@ def main():
 
     water = build_water_atoms(cell, oxygen_positions, rng)
 
-    # 5. merge
+    # 5. merge structures
     full = slab + water
     full.set_cell(cell)
     full.set_pbc((True, True, True))
@@ -474,7 +474,7 @@ def main():
             max_iterations=INPUT["ion_max_iterations"],
         )
 
-    # 7. move_mask 생성 (input POSCAR의 constraint 반영)
+    # 7. build move_mask (reflecting constraints from the input POSCAR)
     move_mask = None
     if INPUT["output_format"].lower() in ["extxyz", "xyz"] and INPUT["write_move_mask"]:
         move_mask = build_move_mask_from_constraints(
@@ -488,7 +488,7 @@ def main():
         if move_mask is not None:
             move_mask = move_mask[order]
 
-    # 9. write
+    # 9. write structure
     saved_file = write_structure(
         atoms=full,
         output_file=INPUT["output_file"],
