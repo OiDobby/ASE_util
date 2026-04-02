@@ -12,29 +12,29 @@ from ase.io import iread, write
 # ========= INPUT =========
 # =========================
 INPUT = {
-    "input_file": "./1F/traj_1F_551.extxyz",   # 변환할 extxyz 파일
-    "output_dir": "./for_DFT/poscars_551_1F",          # 출력 디렉터리
+    "input_file": "./1F/traj_1F_551.extxyz",   # extxyz file to convert
+    "output_dir": "./for_DFT/poscars_551_1F",  # output directory
 
-    "start_index": 0,       # POSCAR_step 시작 번호
-    "number_padding": 0,    # 6 -> POSCAR_step000123
+    "start_index": 0,       # starting number for POSCAR_step
+    "number_padding": 0,    # e.g. 6 -> POSCAR_step000123
 
-    "resume_from_existing": False, # 기존 파일이 있으면 다음 번호부터 이어쓰기
-    "overwrite": True,             # 이름 충돌 시 덮어쓰기 여부(기본 False)
+    "resume_from_existing": False, # if existing files are found, continue from the next index
+    "overwrite": True,             # overwrite on name collision (default False)
 
-    # VASP 쓰기 옵션
-    "vasp_direct": True,    # True=Direct(분수좌표), False=Cartesian
-    "vasp_sort": False,     # 원소 정렬
-    "vasp5": True,          # VASP5 헤더
+    # VASP writing options
+    "vasp_direct": True,    # True=Direct (fractional), False=Cartesian
+    "vasp_sort": False,     # sort elements
+    "vasp5": True,          # VASP5 header
 
-    # POSCAR 첫 줄 코멘트 템플릿
+    # POSCAR first-line comment template
     "comment_template": "{src} | frame {frame} -> step {step}",
 
-    # === 선택/샘플링 옵션 ===
+    # === selection / sampling options ===
     "sample_mode": "uniform",        # "sequential" | "random" | "uniform"
-    "skip_initial": 2500,           # 앞에서 제외할 프레임 수
-    "sample_count": 3 ,            # 추출할 프레임 수 (None이면 전부)
-    "random_seed": 42,             # 무작위 시드(재현성)
-    "sample_extxyz_path": "./for_DFT/sampled_551_1F.extxyz",  # 선택 프레임만 모은 extxyz
+    "skip_initial": 2500,            # number of initial frames to skip
+    "sample_count": 3 ,              # number of frames to extract (None = all)
+    "random_seed": 42,               # random seed (for reproducibility)
+    "sample_extxyz_path": "./for_DFT/sampled_551_1F.extxyz",  # extxyz collecting only selected frames
 }
 # =========================
 # ======= END INPUT =======
@@ -117,7 +117,7 @@ def compute_selected_indices(
     sample_mode: str,
     random_seed: int,
 ) -> List[int]:
-    # 가용 구간
+    # Available frame range
     start = max(0, int(skip_initial))
     if start >= total_frames:
         return []
@@ -148,7 +148,7 @@ def main():
 
     infile = Path(cfg.get("input_file", "")).expanduser().resolve()
     if not infile.exists():
-        raise SystemExit(f"[ERROR] 입력 파일을 찾지 못했습니다: {infile}")
+        raise SystemExit(f"[ERROR] Input file not found: {infile}")
 
     outdir = Path(cfg.get("output_dir", "./poscar_out")).expanduser().resolve()
     outdir.mkdir(parents=True, exist_ok=True)
@@ -174,19 +174,19 @@ def main():
     sample_extxyz_path = cfg.get("sample_extxyz_path", None)
     sample_extxyz_path = str(sample_extxyz_path) if sample_extxyz_path else None
 
-    print("=== EXTXYZ → POSCAR (with optional sampling) ===")
+    print("=== EXTXYZ -> POSCAR (with optional sampling) ===")
     print(f"- input: {infile}")
     print(f"- output dir: {outdir}")
     print(f"- mode: {'Direct' if direct else 'Cartesian'}, vasp5={vasp5}, sort={sort}")
     print(f"- skip_initial: {skip_initial}, sample_count: {sample_count}, sample_mode: {sample_mode}")
 
-    # 1) 전체 프레임 수 계산
+    # 1) Count total number of frames
     total = count_frames(infile)
     if total == 0:
-        print("[INFO] 입력 파일에 프레임이 없습니다.")
+        print("[INFO] No frames found in the input file.")
         return
 
-    # 2) 선택 인덱스 결정
+    # 2) Determine selected frame indices
     selected_list = compute_selected_indices(
         total_frames=total,
         skip_initial=skip_initial,
@@ -200,15 +200,15 @@ def main():
     print(f"- selected frames: {len(selected_list)}"
           f" ({'none' if not selected_list else f'{selected_list[0]}..{selected_list[-1]} (sorted)'})")
 
-    # sample extxyz 준비(덮어쓰기)
+    # Prepare sampled extxyz output (overwrite if exists)
     sample_extxyz_file: Optional[Path] = None
     if sample_extxyz_path:
         sample_extxyz_file = Path(sample_extxyz_path).expanduser().resolve()
         if sample_extxyz_file.exists():
-            sample_extxyz_file.unlink()  # 새로 생성
+            sample_extxyz_file.unlink()  # create a new file
 
     saved = 0
-    # 3) 2차 패스: 선택 프레임만 처리
+    # 3) Second pass: process only selected frames
     for i, atoms in enumerate(iread(str(infile), format="extxyz")):
         if i not in selected_set:
             continue
@@ -233,7 +233,7 @@ def main():
             comment=comment,
         )
 
-        # 선택 프레임만 모은 extxyz로도 저장 (append)
+        # Also save only the selected frames into a separate extxyz file (append mode)
         if sample_extxyz_file is not None:
             write(
                 filename=str(sample_extxyz_file),
@@ -242,7 +242,7 @@ def main():
                 append=True,
             )
 
-        print(f"[SAVE] {out_path.name}  ← frame {i}")
+        print(f"[SAVE] {out_path.name}  <- frame {i}")
         step += 1
         saved += 1
 
@@ -254,4 +254,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
