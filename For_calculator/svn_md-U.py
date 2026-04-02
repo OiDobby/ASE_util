@@ -19,11 +19,6 @@ try:
 except Exception:
     NoseHoover = None
 
-# EFQ calculator (estorch 버전)
-#from estorch.dynamics.nequip_calculator import NequIPCalculator
-# U model용 AtomicData
-#from estorch.data import AtomicData, AtomicDataDict
-
 from sevenn.calculator import SevenNetCalculator, SevenNetD3Calculator
 
 
@@ -316,68 +311,6 @@ def load_ckpt_if_any(atoms_base, run_id: int):
     return at, traj0, simfs0, seg0, True
 
 
-# ----------------- U 모델 -----------------
-def _cell_area_A2(atoms, plane: str) -> float:
-    cell = np.asarray(atoms.cell.array, dtype=float)  # (3,3)
-    a, b, c = cell
-    def area(u, v): return float(np.linalg.norm(np.cross(u, v)))
-    if plane == "xy":
-        return area(a, b)
-    if plane == "yz":
-        return area(b, c)
-    if plane == "zx":
-        return area(c, a)
-    areas = [area(a, b), area(b, c), area(c, a)]
-    return max(areas)
-
-def predict_U_once(atoms,
-                   u_model: torch.jit.ScriptModule,
-                   out_keys=U_OUT_KEYS,
-                   r_max: Optional[float] = None,
-                   area_normalize: bool = True,
-                   area_plane: str = "auto",
-                   scale: float = 1.0,
-                   offset: float = 0.0) -> float:
-    # r_max 결정
-    r_eff = r_max
-    if r_eff is None:
-        calc = getattr(atoms, "calc", None)
-        r_eff = getattr(calc, "r_max", None) if calc is not None else None
-    if r_eff is None:
-        r_eff = 5.0
-
-    # AtomicData
-    data = AtomicData.from_ase(atoms=atoms, r_max=r_eff)
-    dd = AtomicData.to_AtomicDataDict(data)
-    for k, v in list(dd.items()):
-        if torch.is_tensor(v):
-            dd[k] = v.to(DEVICE)
-
-    with torch.no_grad():
-        out = u_model(dd)
-
-    U_val = None
-    for k in out_keys:
-        if k in out:
-            t = out[k]
-            U_val = float(t.detach().cpu().reshape(-1)[0])
-            break
-    if U_val is None:
-        for v in out.values():
-            if torch.is_tensor(v) and v.numel() > 0:
-                U_val = float(v.detach().cpu().reshape(-1)[0])
-                break
-    if U_val is None:
-        raise RuntimeError("[U] no suitable output key/tensor")
-
-    if area_normalize:
-        A = _cell_area_A2(atoms, area_plane if area_plane != "auto" else "auto")
-        if A > 0:
-            U_val = U_val / A
-
-    return float(U_val * scale + offset)
-
-
 # ===================== 메인 루프 =====================
 def run_one(run_id: int, atomsA):
     # 시작 구조
@@ -449,17 +382,7 @@ def run_one(run_id: int, atomsA):
                 qmean0 = float(np.asarray(q0).mean())
         except Exception:
             pass
-        # U (초기 저장 원하면)
-        if USE_U_MODEL and u_model is not None:
-            try:
-                U0 = predict_U_once(atoms, u_model,
-                                    out_keys=U_OUT_KEYS,
-                                    r_max=U_R_MAX, area_normalize=U_AREA_NORMALIZE,
-                                    area_plane=U_AREA_PLANE, scale=U_SCALE, offset=U_OFFSET)
-                atoms.info["electrode_potential"] = float(U0)
-            except Exception as err:
-                print(f"[U] predict failed at start: {err}")
-
+        
         atoms.info["energy"] = float(e0)
         atoms.info["md_traj_step"] = int(traj_step)
         atoms.info["md_segment"]   = int(segment_id)
@@ -617,18 +540,7 @@ def run_one(run_id: int, atomsA):
                 atoms.info["md_traj_step"] = int(traj_step)
                 atoms.info["md_segment"]   = int(segment_id)
                 atoms.info["md_sim_fs"]    = float(sim_time_fs)
-
-                # 저장 시에만 U 예측
-                if USE_U_MODEL and (u_model is not None):
-                    try:
-                        Uv = predict_U_once(atoms, u_model,
-                                            out_keys=U_OUT_KEYS,
-                                            r_max=U_R_MAX, area_normalize=U_AREA_NORMALIZE,
-                                            area_plane=U_AREA_PLANE, scale=U_SCALE, offset=U_OFFSET)
-                        atoms.info["electrode_potential"] = float(Uv)
-                    except Exception as err:
-                        print(f"[U] predict failed at traj {traj_step}: {err}")
-
+                
                 write(out_file, atoms, format="extxyz", append=True, write_results=False)
                 if LOG_ON_WRITE:
                     log_runtime(RUNTIME_LOG_PATH, run_id, traj_step, int(TARGET_TIME_FS/DT_FS), segment_id,
