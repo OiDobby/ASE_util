@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-extxyz -> LAMMPS data (atom_style atomic)  [ASE 기반 + Masses 항상 포함 + 원소 자동]
-- argparse 없음. 아래 INPUT BLOCK만 수정하고 실행:
+extxyz -> LAMMPS data (atom_style atomic)  [ASE-based + always includes Masses + automatic element handling]
+- No argparse. Edit only the INPUT BLOCK below and run:
     python extxyz_to_lammps_data_ase_mass.py
 
-핵심
-- 어떤 원소가 와도(예: Li, Na, F, Cl, ...) ASE periodic table에서 질량을 자동으로 가져와
-  LAMMPS data 파일의 Masses 섹션을 "반드시" 채웁니다.
-- LAMMPS는 type만 보고 질량을 유추하지 못하므로, Masses(또는 mass 명령)가 반드시 필요합니다.
-- SevenNet pair_coeff에 들어갈 원소 순서(ELEM)는 "type 순서"와 동일해야 합니다.
-  -> 이 스크립트는 typemap 파일로 그 순서를 같이 기록해줍니다.
+Key points
+- For any element (e.g. Li, Na, F, Cl, ...), the script automatically retrieves the mass
+  from the ASE periodic table and always fills the Masses section in the LAMMPS data file.
+- LAMMPS cannot infer atomic masses from type numbers alone, so the Masses section
+  (or explicit mass commands) is required.
+- The element order (ELEM) used in SevenNet pair_coeff must be identical to the LAMMPS type order.
+  -> This script also writes that order into a typemap file.
 
-필요:
+Requirements:
 - ase (pip install ase)
 - numpy
 """
@@ -20,25 +21,25 @@ extxyz -> LAMMPS data (atom_style atomic)  [ASE 기반 + Masses 항상 포함 + 
 # =========================
 # INPUT BLOCK (edit here)
 # =========================
-EXTXYZ_IN   = "541_H2O.extxyz"                         # 입력 extxyz
-FRAME_INDEX = 0                                        # 프레임 인덱스
-OUT_DATA    = "541_H2O.data"                           # 출력 LAMMPS data
+EXTXYZ_IN   = "541_H2O.extxyz"                         # input extxyz
+FRAME_INDEX = 0                                        # frame index
+OUT_DATA    = "541_H2O.data"                           # output LAMMPS data
 
-WRAP_POS    = True                                     # 좌표 wrap (추천)
+WRAP_POS    = True                                     # wrap positions (recommended)
 
-# type 순서(type 1..N)
-# - None이면: extxyz에 등장하는 원소를 자동 정렬(sorted unique)해서 사용 (가장 편함)
-# - list면: 반드시 이 순서로 type을 부여 (pair_coeff의 원소 순서와 맞춰야 함)
-SPEC_ORDER  = ["Ag", "O", "H"]   # 예: ["Li","H","C","N","O"] 또는 None
+# Type order (type 1..N)
+# - If None: automatically use sorted unique elements appearing in the extxyz (most convenient)
+# - If a list is given: types are assigned in exactly this order (must match pair_coeff element order)
+SPEC_ORDER  = ["Ag", "O", "H"]   # example: ["Li","H","C","N","O"] or None
 
-# typemap 출력(추천): type<->원소, pair_coeff에 넣을 ELEM 문자열
+# Write typemap output (recommended): type <-> element, and ELEM string for pair_coeff
 WRITE_TYPEMAP = False
 OUT_TYPEMAP   = "ref.txt"
 
-# grain 라벨 TSV 저장 (선택)
+# Save grain-label TSV (optional)
 WRITE_GRAINMAP = False
 OUT_GRAINMAP   = "ref_grainmap.tsv"
-# extxyz에 아래 arrays가 있어야 함:
+# The extxyz must contain the following arrays:
 #   grain_num, grain_type, intra_grain_sequence
 # =========================
 
@@ -74,7 +75,7 @@ def cell_to_lammps_triclinic(cell_rows_abc: np.ndarray):
     c_perp = c - cx * a_hat - cy * b_hat_perp
     cz = np.linalg.norm(c_perp)
     if cz <= 0:
-        raise ValueError("Invalid cell: c lies in a-b plane")
+        raise ValueError("Invalid cell: c lies in the a-b plane")
 
     xlo, ylo, zlo = 0.0, 0.0, 0.0
     xhi, yhi, zhi = ax, by, cz
@@ -93,7 +94,7 @@ def write_grainmap_tsv(atoms, out_tsv: str) -> None:
     gseq = atoms.arrays["intra_grain_sequence"].astype(int)
 
     lines = ["id\tgrain_num\tgrain_type\tintra_grain_sequence\n"]
-    for i in range(len(atoms)):  # LAMMPS data의 atom id는 1..N
+    for i in range(len(atoms)):  # LAMMPS atom IDs are 1..N
         lines.append(f"{i+1}\t{gnum[i]}\t{gtyp[i]}\t{gseq[i]}\n")
 
     Path(out_tsv).write_text("".join(lines), encoding="utf-8")
@@ -118,12 +119,12 @@ def main():
         import ase.io
         from ase.data import atomic_numbers, atomic_masses
     except Exception as e:
-        raise SystemExit(f"ASE가 필요합니다. 설치: pip install ase\n원인: {e}")
+        raise SystemExit(f"ASE is required. Install with: pip install ase\nCause: {e}")
 
     atoms = ase.io.read(EXTXYZ_IN, index=FRAME_INDEX, format="extxyz")
 
     if atoms.cell is None or atoms.cell.volume <= 0:
-        raise SystemExit("extxyz header에 Lattice가 없거나 cell이 유효하지 않습니다.")
+        raise SystemExit("The extxyz header does not contain a valid Lattice/cell.")
 
     if WRAP_POS:
         atoms.wrap(eps=1e-12)
@@ -134,7 +135,7 @@ def main():
     missing = [s for s in present if s not in specorder]
     if missing:
         raise SystemExit(
-            f"extxyz에 있는 원소가 SPEC_ORDER에 없습니다: {missing}\n"
+            f"The following elements in the extxyz are missing from SPEC_ORDER: {missing}\n"
             f"present={present}\nSPEC_ORDER={specorder}"
         )
 
@@ -142,7 +143,7 @@ def main():
     type_map = {sym: i + 1 for i, sym in enumerate(specorder)}
     types = np.array([type_map[s] for s in atoms.get_chemical_symbols()], dtype=int)
 
-    # masses from ASE periodic table
+    # masses from the ASE periodic table
     masses = []
     for sym in specorder:
         Z = atomic_numbers[sym]
