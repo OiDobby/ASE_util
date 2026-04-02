@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-LAMMPS dump(lammpstrj) -> extxyz  [ASE로 출력, type->원소 자동 로드 지원]
+LAMMPS dump (lammpstrj) -> extxyz  [written with ASE, supports automatic type->element loading]
 
-- argparse 없음. 아래 INPUT BLOCK만 수정하고 실행:
+- No argparse. Edit only the INPUT BLOCK below and run:
     python lammps_dump_to_extxyz_ase.py
 
-지원:
+Supported:
 - BOX BOUNDS (orthorhombic)
 - BOX BOUNDS xy xz yz (triclinic)
-- ATOMS 컬럼: id type (xu yu zu | x y z) (fx fy fz optional)
-- grainmap TSV(id -> grain_num/type/sequence) 병합(선택)
-- type->species 매핑 자동:
+- ATOMS columns: id type (xu yu zu | x y z) (fx fy fz optional)
+- Optional grainmap TSV merge (id -> grain_num/type/sequence)
+- Automatic type->species mapping:
     1) TYPE_TO_SPECIES dict
     2) TYPEMAP_TXT
-    3) DATA_FILE의 Masses 섹션(# element 주석)
+    3) Masses section in DATA_FILE (# element comment)
 
-필요:
+Requirements:
 - numpy
 - ase (pip install ase)
 """
@@ -27,26 +27,26 @@ LAMMPS dump(lammpstrj) -> extxyz  [ASE로 출력, type->원소 자동 로드 지
 DUMP_IN    = "dump_300K_0GPa.lammpstrj"
 OUT_EXTXYZ = "traj_H2O_541.extxyz"
 
-# type 매핑
-# - TYPE_TO_SPECIES가 있으면 그걸 최우선 사용
-# - 없으면 TYPEMAP_TXT
-# - 그것도 없으면 DATA_FILE의 Masses에서 읽기
+# type mapping
+# - If TYPE_TO_SPECIES is provided, it has the highest priority
+# - Otherwise use TYPEMAP_TXT
+# - If that is also unavailable, read from the Masses section of DATA_FILE
 TYPEMAP_TXT = None
 DATA_FILE   = "../input_struct/541_1Na.data"
 
 TYPE_TO_SPECIES = None
-# 예:
+# example:
 # TYPE_TO_SPECIES = {1: "H", 2: "C", 3: "N", 4: "O"}
 
-# dump에 xu/yu/zu가 있으면 그걸 우선 사용
+# If xu/yu/zu are present in the dump, use them first
 PREFERRED_POS_COLS = ("xu", "yu", "zu")   # fallback: ("x", "y", "z")
 
-# forces 컬럼이 있다면 extxyz에 forces 배열로 기록
+# If force columns exist, store them as a forces array in extxyz
 WRITE_FORCES = True
 
-# grain 옵션
-# False: dump만 읽고 grain 관련 처리는 전부 생략
-# True : grainmap TSV를 읽어서 grain arrays를 extxyz에 저장
+# grain options
+# False: read only the dump and skip all grain-related processing
+# True : read grainmap TSV and store grain arrays in extxyz
 USE_GRAIN = False
 GRAINMAP_TSV = "../../ref_grainmap.tsv"
 # =========================
@@ -144,10 +144,10 @@ def get_type_to_species():
         return m
 
     raise RuntimeError(
-        "type->species 매핑을 만들 수 없습니다.\n"
-        "1) TYPE_TO_SPECIES를 dict로 직접 지정하거나,\n"
-        "2) TYPEMAP_TXT를 준비하거나,\n"
-        "3) DATA_FILE Masses 라인에 '# 원소' 주석이 있어야 합니다."
+        "Failed to create a type->species mapping.\n"
+        "1) Define TYPE_TO_SPECIES directly as a dict, or\n"
+        "2) prepare TYPEMAP_TXT, or\n"
+        "3) make sure DATA_FILE Masses lines include '# element' comments."
     )
 
 
@@ -177,7 +177,7 @@ def main():
         from ase import Atoms
         import ase.io
     except Exception as e:
-        raise SystemExit(f"ASE가 필요합니다. 설치: pip install ase\n원인: {e}")
+        raise SystemExit(f"ASE is required. Install with: pip install ase\nCause: {e}")
 
     type_to_species = get_type_to_species()
 
