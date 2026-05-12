@@ -26,7 +26,7 @@ from sevenn.calculator import SevenNetCalculator, SevenNetD3Calculator
 # ===================== 사용자 옵션 =======================
 # 입력/모델
 INPUT_XYZ         = "/home/jwkuha/Ag_H2O/model_tmp/MLP_MD/input_files/541/541_H2O.extxyz"          # 초기 구조 (extxyz; move_mask:I:3 / fix_mask:I:3 권장)
-EFQ_MODEL_PATH    = "/home/jwkuha/scr/SevenNet-Omni.pth"    # EFQ(에너지/힘/전하) 모델 (TorchScript)
+EFQ_MODEL_PATH    = "7Net-Omni"    # EFQ(에너지/힘/전하) 모델 (TorchScript)
 SPECIES_MAP       = {"Ag": "Ag", "O": "O", "H": "H"}
 DEVICE            = "cuda"                         # "cuda" or "cpu"
 
@@ -331,7 +331,7 @@ def run_one(run_id: int, atomsA):
         functional_name='pbe',      # D3 파라미터용 함수형 (ex: pbe, b3lyp 등)
         vdw_cutoff=9000,            # 기본값 그대로 사용 가능
         cn_cutoff=1600,             # 기본값 그대로 사용 가능
-        modal='omat24'
+        modal='mpa'
     )
     atoms.calc = calc
 
