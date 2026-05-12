@@ -1,0 +1,130 @@
+# RDX MD with SevenNet-0 (PyTorch interface: e3gnn / e3gnn/parallel)
+# Docs: SevenNet "LAMMPS: PyTorch"
+# - units metal: distance=Å, time=ps, pressure=bar
+# - timestep: 0.5 fs = 0.0005 ps
+# - pressure conversion: 1 GPa = 10000 bar
+
+# ----------------- user variables -----------------
+variable DATA    string "../input_struct/551_H2O.data"    # your LAMMPS data file
+variable MODEL   string "../deployed_distilled-gen2.pt"     # SevenNet deployed SERIAL model (PyTorch mode)
+variable ELEM    string "Ag O H"                  # MUST match atom types in DATA (type 1..4)
+
+# run condition (edit or pass via -var)
+variable T       equal 300.0       # K
+variable PGPa    equal 0.0         # GPa (0, 10, 20 ...)
+variable EQ_ps   equal 00.00       # NPT equil length (ps)
+variable PR_ps   equal 1000.0      # NVT production length (ps)
+
+# For ave/time
+variable avT     equal temp
+variable avP     equal press
+variable avV     equal vol
+variable avRho   equal density
+
+# output
+variable dump_fs equal 50.0        # dump interval (fs)
+
+# ----------------- initialization -----------------
+units           metal
+boundary        p p f
+atom_style      atomic
+atom_modify     map yes
+newton          on
+
+read_data       ${DATA}
+
+# ----------------- fixed atom -----------------
+include         "../input_struct/freeze_lammps_H2O.in"
+
+# 확인용
+variable        nfrozen equal count(frozen)
+variable        nmobile equal count(mobile)
+print           "nfrozen = ${nfrozen}"
+print           "nmobile = ${nmobile}" 
+
+# ----------------- SevenNet potential (PyTorch) -----------------
+# Single-GPU MD uses:
+#pair_style  e3gnn
+#pair_coeff  * * {path to serial model} {space separated chemical species}
+
+# w/o D3
+pair_style      e3gnn
+pair_coeff      * * ${MODEL} ${ELEM}
+
+# w/ D3
+#pair_style hybrid/overlay e3gnn d3 9000 1600 damp_zero pbe
+#pair_coeff      * * e3gnn ${MODEL} ${ELEM}
+#pair_coeff      * * d3    ${ELEM}
+
+# ----------------- MD settings -----------------
+neighbor        2.0 bin
+neigh_modify    delay 0 every 1 check yes
+
+variable dt_ps      equal 0.0005
+timestep            ${dt_ps}
+
+# damping (ps). Start gently for crystal MD.
+variable Tdamp       equal 0.1
+variable Pdamp       equal 5.0
+
+# pressure conversion: bar
+variable Pbar        equal ${PGPa}*10000.0
+
+# steps
+variable EQ_steps    equal ${EQ_ps}/${dt_ps}
+variable PR_steps    equal ${PR_ps}/${dt_ps}
+variable dump_steps  equal (${dump_fs}*1.0e-3)/${dt_ps}   # fs -> ps -> steps
+
+thermo          ${dump_steps}
+thermo_style    custom step temp press pe etotal vol density lx ly lz
+thermo_modify   flush yes
+
+# dump (sorted by id so post-processing grain map is stable)
+dump            1 all custom ${dump_steps} dump_${T}K_${PGPa}GPa.lammpstrj id type xu yu zu fx fy fz
+dump_modify     1 sort id
+
+variable vstep equal step
+variable vpe   equal pe
+variable vet   equal etotal
+fix eout all ave/time ${dump_steps} 1 ${dump_steps} v_vstep v_vpe v_vet file energy_${T}K_${PGPa}GPa.dat
+
+# velocities (only if your data file has no velocities)
+#velocity        all create ${T} 4928459 mom yes rot yes dist gaussian
+velocity        mobile create ${T} 4928459 mom yes rot yes dist gaussian
+
+# ----------------- NPT equilibration -----------------
+# aniso: allow full cell fluctuations for crystal; will produce triclinic box as needed.
+#fix             av all ave/time 1000 50 50000 v_avT v_avP v_avV v_avRho file aveTPV_${T}K_${PGPa}GPa.dat
+#
+#fix             1 all npt temp ${T} ${T} ${Tdamp} aniso ${Pbar} ${Pbar} ${Pdamp} drag 1.0
+#run             ${EQ_steps}
+#unfix           1
+#unfix           av
+#
+#write_data NPT_${T}K_${PGPa}GPa.data
+
+# ----------------- NVT production -----------------
+fix             1 mobile nvt temp ${T} ${T} ${Tdamp}
+fix             wall all wall/reflect zhi 30.0
+run             ${PR_steps}
+unfix           1
+
+write_restart   restart_${T}K_${PGPa}GPa.bin
+write_data NVT_${T}K_${PGPa}GPa.data
+print "DONE: T=${T} K, P=${PGPa} GPa"
+
+# --- OPTIONAL: Multi-GPU version (requires parallel deployed model directory) ---
+# Replace the pair_style / pair_coeff block above with this block:
+#
+#   pair_style  e3gnn/parallel
+#   pair_coeff  * * {num_message_passing_layers} {directory_of_parallel_model} {space separated chemical species}
+#
+# Example:
+#   variable NLAYER equal 4
+#   variable PDIR   string ./deployed_parallel
+#   pair_style  e3gnn/parallel
+#   pair_coeff  * * ${NLAYER} ${PDIR} ${ELEM}
+#
+# Caution from docs: parallel version may error if a subdomain has no atoms; use `fix balance` if needed.
+# Example:
+#   fix bal all balance 1000 1.1 rcb
